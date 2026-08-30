@@ -56,6 +56,14 @@ jobs:
           cp -a openwrt-core/package/libs/libubox sdk/package/libs/
           cp -a openwrt-core/package/system/ubus sdk/package/system/
 
+          # These core package definitions leave upstream Lua/examples enabled
+          # by default. They are not needed to stage the C libraries QModem uses.
+          sed -i \
+            -e '/-DLUAPATH=\/usr\/lib\/lua/i\  -DBUILD_LUA=OFF \\' \
+            -e '/-DLUAPATH=\/usr\/lib\/lua/i\  -DBUILD_EXAMPLES=OFF \\' \
+            sdk/package/libs/libubox/Makefile \
+            sdk/package/system/ubus/Makefile
+
           # H69K uses a Quectel RM520N-GL. Keep only the Quectel vendor QMI
           # driver dependency instead of forcing Fibocom and SIMCom drivers too.
           sed -i \
@@ -136,14 +144,8 @@ jobs:
           set -eu
           # Stage json-c headers before building QModem packages that include them.
           make package/libs/libjson-c/compile -j"$(nproc)" V=sc
-          make package/libs/libubox/compile \
-            CONFIG_PACKAGE_liblua= \
-            CONFIG_PACKAGE_libubox-lua= \
-            -j"$(nproc)" V=sc
-          make package/system/ubus/compile \
-            CONFIG_PACKAGE_liblua= \
-            CONFIG_PACKAGE_ubus-lua= \
-            -j"$(nproc)" V=sc
+          make package/libs/libubox/compile -j"$(nproc)" V=sc
+          make package/system/ubus/compile -j"$(nproc)" V=sc
 
           for package in \
             tom_modem \
