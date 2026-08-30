@@ -31,7 +31,14 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential clang flex bison g++ gawk gcc-multilib \
             gettext git libncurses-dev libssl-dev python3 rsync \
-            unzip file wget zstd
+            unzip file wget zstd python3-dev python3-setuptools \
+            python3-pyelftools swig
+          # Use the distribution Python with the modules installed by apt,
+          # rather than a runner tool-cache Python with a different sys.path.
+          export PATH="/usr/bin:${PATH}"
+          echo /usr/bin >> "${GITHUB_PATH}"
+          python3 -c 'import sys, elftools, setuptools; print(sys.executable); print(elftools.__file__)'
+          swig -version
 
       - name: Download and verify the matching OpenWrt SDK
         run: |
@@ -124,6 +131,15 @@ jobs:
           grep -q '^CONFIG_PACKAGE_luci-app-qmodem-next=m$' .config
           grep -q '^CONFIG_PACKAGE_luci-app-qmodem_INCLUDE_vendor-qmi-wwan=y$' .config
           grep -q '^CONFIG_PACKAGE_kmod-qmi_wwan_q=m$' .config
+
+      - name: Verify complete SDK prerequisites before compilation
+        working-directory: sdk
+        run: |
+          set -euo pipefail
+          mkdir -p build-logs
+          python3 -c 'import sys, elftools, setuptools; print(sys.executable); print(elftools.__file__)' \
+            2>&1 | tee build-logs/host-python.log
+          make prereq -j1 V=sc 2>&1 | tee build-logs/prerequisites.log
 
       - name: Download package sources
         working-directory: sdk
