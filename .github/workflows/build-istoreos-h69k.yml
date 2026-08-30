@@ -120,7 +120,7 @@ jobs:
         run: |
           set -eu
           # Stage json-c headers before building QModem packages that include them.
-          make package/libs/libjson-c/compile -j"$(nproc)" V=sc
+          make package/feeds/packages/libjson-c/compile -j"$(nproc)" V=sc
 
           for package in \
             tom_modem \
