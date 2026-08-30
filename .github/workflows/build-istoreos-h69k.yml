@@ -1,0 +1,214 @@
+name: Build QModem for iStoreOS H69K
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  OPENWRT_VERSION: "24.10.8"
+  TARGET: rockchip
+  SUBTARGET: armv8
+  SDK_FILE: openwrt-sdk-24.10.8-rockchip-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+  SDK_SHA256: 7ac9801311275b63aea3cba74e68c27fc74ced2a50a0c8f4b0d9adfd8ae768ea
+  SDK_URL: https://downloads.openwrt.org/releases/24.10.8/targets/rockchip/armv8
+
+jobs:
+  build:
+    name: QModem v3.2.0 / iStoreOS 24.10.8 / H69K
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout QModem
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang flex bison g++ gawk gcc-multilib \
+            gettext git libncurses-dev libssl-dev python3 rsync \
+            unzip file wget zstd
+
+      - name: Download and verify the matching OpenWrt SDK
+        run: |
+          wget -q --show-progress "${SDK_URL}/${SDK_FILE}"
+          printf '%s  %s\n' "${SDK_SHA256}" "${SDK_FILE}" | sha256sum -c -
+          mkdir sdk
+          tar --zstd -xf "${SDK_FILE}" -C sdk --strip-components=1
+
+      - name: Pin OpenWrt 24.10.8 feeds and add QModem
+        run: |
+          # H69K uses a Quectel RM520N-GL. Keep only the Quectel vendor QMI
+          # driver dependency instead of forcing Fibocom and SIMCom drivers too.
+          sed -i \
+            -e '/vendor-qmi-wwan:kmod-qmi_wwan_f/d' \
+            -e '/vendor-qmi-wwan:kmod-qmi_wwan_s/d' \
+            application/qmodem/Makefile
+
+          wget -q "${SDK_URL}/feeds.buildinfo" -O sdk/feeds.conf
+          printf 'src-link qmodem %s\n' "${GITHUB_WORKSPACE}" >> sdk/feeds.conf
+          cd sdk
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Configure the H69K package set
+        run: |
+          cat > sdk/.config <<'EOF'
+          CONFIG_TARGET_rockchip=y
+          CONFIG_TARGET_rockchip_armv8=y
+          CONFIG_ALL_NONSHARED=n
+          CONFIG_ALL_KMODS=n
+          CONFIG_ALL=n
+          CONFIG_AUTOREMOVE=n
+          CONFIG_LUCI_LANG_zh_Hans=y
+
+          CONFIG_PACKAGE_luci-app-qmodem=m
+          CONFIG_PACKAGE_luci-app-qmodem-next=m
+          CONFIG_PACKAGE_luci-i18n-qmodem-next-zh-cn=m
+          CONFIG_PACKAGE_luci-app-qmodem-ttlfw4=m
+          CONFIG_PACKAGE_luci-i18n-qmodem-ttlfw4-zh-cn=m
+          CONFIG_PACKAGE_qmodem=m
+          CONFIG_PACKAGE_qmodem_INCLUDE_SEAL=n
+          CONFIG_PACKAGE_tom_modem=m
+          CONFIG_PACKAGE_tom_modem_EARLY_RETURN=y
+          CONFIG_PACKAGE_tom_modem_ENABLE_UBUS_DAEMON=y
+          CONFIG_PACKAGE_ubus-at-daemon=m
+          CONFIG_PACKAGE_modem_scan=m
+          CONFIG_PACKAGE_sms-tool_q=m
+          CONFIG_PACKAGE_sms-forwarder-next=m
+          CONFIG_PACKAGE_quectel-CM-5G-M=m
+
+          CONFIG_PACKAGE_luci-app-qmodem_INCLUDE_ndisc6=y
+          CONFIG_PACKAGE_luci-app-qmodem_INCLUDE_vendor-qmi-wwan=y
+          CONFIG_PACKAGE_luci-app-qmodem_INCLUDE_generic-qmi-wwan=n
+          CONFIG_PACKAGE_luci-app-qmodem_INCLUDE_nss-qmi-wwan=n
+          CONFIG_PACKAGE_luci-app-qmodem_USE_TOM_CUSTOMIZED_QUECTEL_CM=y
+          CONFIG_PACKAGE_luci-app-qmodem_USING_QWRT_QUECTEL_CM_5G=n
+          CONFIG_PACKAGE_luci-app-qmodem_USING_NORMAL_QUECTEL_CM=n
+          CONFIG_PACKAGE_luci-app-qmodem_INCLUDE_ADD_PCI_SUPPORT=n
+          CONFIG_PACKAGE_luci-app-qmodem_INCLUDE_ADD_MTK_T7XX_SUPPORT=n
+          CONFIG_PACKAGE_luci-app-qmodem_INCLUDE_ADD_QFIREHOSE_SUPPORT=n
+
+          CONFIG_PACKAGE_kmod-qmi_wwan_q=m
+          EOF
+
+          cd sdk
+          make defconfig
+
+          grep -q '^CONFIG_PACKAGE_luci-app-qmodem-next=m$' .config
+          grep -q '^CONFIG_PACKAGE_luci-app-qmodem_INCLUDE_vendor-qmi-wwan=y$' .config
+          grep -q '^CONFIG_PACKAGE_kmod-qmi_wwan_q=m$' .config
+
+      - name: Download package sources
+        working-directory: sdk
+        run: make download -j"$(nproc)"
+
+      - name: Build QModem and the Quectel QMI driver
+        working-directory: sdk
+        run: |
+          set -eu
+          for package in \
+            tom_modem \
+            ubus_at_daemon \
+            sms-tool_q \
+            modem_scan \
+            quectel_CM_5G_M \
+            sms_forwarder_next \
+            qmodem \
+            luci-app-qmodem-next \
+            luci-app-qmodem-ttlfw4 \
+            quectel_QMI_WWAN
+          do
+            make "package/feeds/qmodem/${package}/compile" -j"$(nproc)" V=sc
+          done
+
+      - name: Assemble the H69K installation bundle
+        run: |
+          set -eu
+          bundle="${GITHUB_WORKSPACE}/H69K-QModem-v3.2.0-iStoreOS-${OPENWRT_VERSION}"
+          mkdir -p "${bundle}/packages"
+
+          cat > "${bundle}/install.sh" <<'INSTALL_SCRIPT'
+          #!/bin/sh
+
+          set -eu
+
+          EXPECTED_KERNEL='6.6.144'
+          EXPECTED_ARCH='aarch64_generic'
+
+          if [ "$(uname -r)" != "$EXPECTED_KERNEL" ]; then
+            echo "错误：此安装包只适用于内核 ${EXPECTED_KERNEL}，当前为 $(uname -r)。"
+            echo '请勿使用 --force-depends 强行安装内核驱动。'
+            exit 1
+          fi
+
+          if ! opkg print-architecture | grep -q "arch ${EXPECTED_ARCH} "; then
+            echo "错误：没有检测到 ${EXPECTED_ARCH} 软件包架构。"
+            exit 1
+          fi
+
+          SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+          cd "$SCRIPT_DIR"
+          sha256sum -c SHA256SUMS.txt
+
+          echo '正在更新软件包索引并安装 QModem 运行依赖……'
+          opkg update
+
+          echo '正在安装 QModem v3.2.0 和 RM520N-GL 使用的 Quectel QMI 驱动……'
+          opkg install packages/*.ipk
+
+          rm -f /tmp/luci-indexcache /tmp/luci-modulecache/* 2>/dev/null || true
+          /etc/init.d/rpcd restart 2>/dev/null || true
+          /etc/init.d/uhttpd restart 2>/dev/null || true
+
+          echo
+          echo '安装完成。建议现在重启 H69K，然后在 LuCI 的“调制解调器 / QModem”中检查 RM520N-GL。'
+          INSTALL_SCRIPT
+          chmod +x "${bundle}/install.sh"
+
+          copy_one() {
+            pattern="$1"
+            file="$(find sdk/bin -type f -name "${pattern}" -print -quit)"
+            if [ -z "${file}" ]; then
+              echo "Missing build output: ${pattern}" >&2
+              exit 1
+            fi
+            cp "${file}" "${bundle}/packages/"
+          }
+
+          copy_one 'qmodem_*.ipk'
+          copy_one 'tom_modem_*.ipk'
+          copy_one 'ubus-at-daemon_*.ipk'
+          copy_one 'sms-tool_q_*.ipk'
+          copy_one 'modem_scan_*.ipk'
+          copy_one 'sms-forwarder-next_*.ipk'
+          copy_one 'quectel-CM-5G-M_*.ipk'
+          copy_one 'luci-app-qmodem-next_*.ipk'
+          copy_one 'luci-i18n-qmodem-next-zh-cn_*.ipk'
+          copy_one 'luci-app-qmodem-ttlfw4_*.ipk'
+          copy_one 'luci-i18n-qmodem-ttlfw4-zh-cn_*.ipk'
+          copy_one 'kmod-qmi_wwan_q_*.ipk'
+
+          {
+            echo "QModem source: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}@${GITHUB_SHA}"
+            echo "QModem version: $(sed -n 's/^QMODEM_VERSION:=//p' version.mk)"
+            echo "OpenWrt/iStoreOS target: ${OPENWRT_VERSION} ${TARGET}/${SUBTARGET}"
+            echo "Required kernel: 6.6.144"
+            echo "Required kernel ABI: 77d4782035a23e6f19f9c4751451b4e3"
+          } > "${bundle}/BUILD-INFO.txt"
+
+          cd "${bundle}"
+          sha256sum packages/*.ipk install.sh BUILD-INFO.txt > SHA256SUMS.txt
+          cd "${GITHUB_WORKSPACE}"
+          tar -czf "${bundle}.tar.gz" "$(basename "${bundle}")"
+
+      - name: Upload installation bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: H69K-QModem-v3.2.0-iStoreOS-${{ env.OPENWRT_VERSION }}
+          path: H69K-QModem-v3.2.0-iStoreOS-${{ env.OPENWRT_VERSION }}.tar.gz
+          if-no-files-found: error
+          retention-days: 30
