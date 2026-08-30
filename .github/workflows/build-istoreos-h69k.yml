@@ -48,6 +48,15 @@ jobs:
             -e '/vendor-qmi-wwan:kmod-qmi_wwan_s/d' \
             application/qmodem/Makefile
 
+          # QModem 3.2.0 omits the target staging include flags in these two
+          # package Makefiles, which breaks json-c detection with OpenWrt 24.10.
+          sed -i \
+            -e 's/CFLAGS="$(TARGET_CFLAGS) $(if/CFLAGS="$(TARGET_CFLAGS) $(TARGET_CPPFLAGS) $(if/' \
+            application/tom_modem/Makefile
+          sed -i \
+            -e 's/CFLAGS="$(TARGET_CFLAGS)"/CFLAGS="$(TARGET_CFLAGS) $(TARGET_CPPFLAGS)"/' \
+            application/quectel_CM_5G_M/Makefile
+
           wget -q "${SDK_URL}/feeds.buildinfo" -O sdk/feeds.conf
           printf 'src-link qmodem %s\n' "${GITHUB_WORKSPACE}" >> sdk/feeds.conf
           cd sdk
@@ -110,6 +119,9 @@ jobs:
         working-directory: sdk
         run: |
           set -eu
+          # Stage json-c headers before building QModem packages that include them.
+          make package/libs/libjson-c/compile -j"$(nproc)" V=sc
+
           for package in \
             tom_modem \
             ubus_at_daemon \
