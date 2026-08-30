@@ -10,6 +10,7 @@ env:
   OPENWRT_VERSION: "24.10.8"
   TARGET: rockchip
   SUBTARGET: armv8
+  OPENWRT_CORE_COMMIT: 0b795ce79e23b553aa184080c390f9ce92a2b6d4
   SDK_FILE: openwrt-sdk-24.10.8-rockchip-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst
   SDK_SHA256: 7ac9801311275b63aea3cba74e68c27fc74ced2a50a0c8f4b0d9adfd8ae768ea
   SDK_URL: https://downloads.openwrt.org/releases/24.10.8/targets/rockchip/armv8
@@ -41,34 +42,13 @@ jobs:
 
       - name: Pin OpenWrt 24.10.8 feeds and add QModem
         run: |
-          # The SDK does not ship the core libjson-c package source. Import the
-          # exact package definition from the matching OpenWrt release tag so
-          # QModem's json-c headers and library can be staged before compiling.
-          git clone --depth 1 --branch "v${OPENWRT_VERSION}" \
-            --filter=blob:none --sparse \
-            https://github.com/openwrt/openwrt.git openwrt-core
-          git -C openwrt-core sparse-checkout set \
-            package/libs/libjson-c \
-            package/libs/libubox \
-            package/system/ubus
-          mkdir -p sdk/package/libs sdk/package/system
-          cp -a openwrt-core/package/libs/libjson-c sdk/package/libs/
-          cp -a openwrt-core/package/libs/libubox sdk/package/libs/
-          cp -a openwrt-core/package/system/ubus sdk/package/system/
-
-          # These core package definitions leave upstream Lua/examples enabled
-          # by default. They are not needed to stage the C libraries QModem uses.
-          sed -i \
-            -e '/-DLUAPATH=\/usr\/lib\/lua/i\  -DBUILD_LUA=OFF \\' \
-            -e '/-DLUAPATH=\/usr\/lib\/lua/i\  -DBUILD_EXAMPLES=OFF \\' \
-            sdk/package/libs/libubox/Makefile \
-            sdk/package/system/ubus/Makefile
-
-          # BUILD_LUA=OFF intentionally does not create lua/ubus.so. Remove the
-          # matching OpenWrt subpackage so the packaging phase does not try to
-          # copy that disabled output.
-          sed -i '/BuildPackage,libubus-lua/d' \
-            sdk/package/system/ubus/Makefile
+          # feeds.buildinfo contains only supplementary feeds. The SDK adds a
+          # base feed separately (target/sdk/Makefile in OpenWrt). Preserve that
+          # complete dependency source rather than importing individual libs.
+          printf 'src-git-full base https://github.com/openwrt/openwrt.git^%s\n' \
+            "${OPENWRT_CORE_COMMIT}" > sdk/feeds.conf
+          wget -q "${SDK_URL}/feeds.buildinfo" -O sdk/feeds.release
+          cat sdk/feeds.release >> sdk/feeds.conf
 
           # H69K uses a Quectel RM520N-GL. Keep only the Quectel vendor QMI
           # driver dependency instead of forcing Fibocom and SIMCom drivers too.
@@ -86,11 +66,14 @@ jobs:
             -e 's/CFLAGS="$(TARGET_CFLAGS)"/CFLAGS="$(TARGET_CFLAGS) $(TARGET_CPPFLAGS)"/' \
             application/quectel_CM_5G_M/Makefile
 
-          wget -q "${SDK_URL}/feeds.buildinfo" -O sdk/feeds.conf
           printf 'src-link qmodem %s\n' "${GITHUB_WORKSPACE}" >> sdk/feeds.conf
           cd sdk
           ./scripts/feeds update -a
           ./scripts/feeds install -a
+          test "$(git -C feeds/base rev-parse HEAD)" = "${OPENWRT_CORE_COMMIT}"
+          for dependency in libcap libjson-c libubox ubus uci ucode; do
+            test -f "package/feeds/base/${dependency}/Makefile"
+          done
 
       - name: Configure the H69K package set
         run: |
@@ -149,11 +132,8 @@ jobs:
       - name: Build QModem and the Quectel QMI driver
         working-directory: sdk
         run: |
-          set -eu
-          # Stage json-c headers before building QModem packages that include them.
-          make package/libs/libjson-c/compile -j"$(nproc)" V=sc
-          make package/libs/libubox/compile -j"$(nproc)" V=sc
-          make package/system/ubus/compile -j"$(nproc)" V=sc
+          set -euo pipefail
+          mkdir -p build-logs
 
           for package in \
             tom_modem \
@@ -168,8 +148,24 @@ jobs:
           do
             # Serialize top-level package builds so the first real failure is
             # preserved in the log instead of being buried by parallel jobs.
-            make "package/feeds/qmodem/${package}/compile" -j1 V=sc
+            make "package/feeds/qmodem/${package}/compile" -j1 V=sc \
+              2>&1 | tee "build-logs/${package}.log"
           done
+
+      - name: Save dependency configuration and build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: H69K-build-diagnostics-${{ github.run_number }}
+          path: |
+            sdk/build-logs/
+            sdk/.config
+            sdk/feeds.conf
+            sdk/tmp/.packageinfo
+            sdk/logs/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Assemble the H69K installation bundle
         run: |
