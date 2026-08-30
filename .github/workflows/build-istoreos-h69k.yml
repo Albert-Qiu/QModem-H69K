@@ -116,7 +116,9 @@ jobs:
           CONFIG_PACKAGE_ubus-at-daemon=m
           CONFIG_PACKAGE_modem_scan=m
           CONFIG_PACKAGE_sms-tool_q=m
-          CONFIG_PACKAGE_sms-forwarder-next=m
+          # Optional SMS forwarding is excluded from the recovery bundle. It
+          # pulls in a separate ucode stack and is not required by QModem.
+          CONFIG_PACKAGE_sms-forwarder-next=n
           CONFIG_PACKAGE_quectel-CM-5G-M=m
 
           CONFIG_PACKAGE_luci-app-qmodem_INCLUDE_ndisc6=y
@@ -159,13 +161,14 @@ jobs:
             sms-tool_q \
             modem_scan \
             quectel_CM_5G_M \
-            sms_forwarder_next \
             qmodem \
             luci-app-qmodem-next \
             luci-app-qmodem-ttlfw4 \
             quectel_QMI_WWAN
           do
-            make "package/feeds/qmodem/${package}/compile" -j"$(nproc)" V=sc
+            # Serialize top-level package builds so the first real failure is
+            # preserved in the log instead of being buried by parallel jobs.
+            make "package/feeds/qmodem/${package}/compile" -j1 V=sc
           done
 
       - name: Assemble the H69K installation bundle
@@ -227,7 +230,6 @@ jobs:
           copy_one 'ubus-at-daemon_*.ipk'
           copy_one 'sms-tool_q_*.ipk'
           copy_one 'modem_scan_*.ipk'
-          copy_one 'sms-forwarder-next_*.ipk'
           copy_one 'quectel-CM-5G-M_*.ipk'
           copy_one 'luci-app-qmodem-next_*.ipk'
           copy_one 'luci-i18n-qmodem-next-zh-cn_*.ipk'
