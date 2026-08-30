@@ -136,8 +136,14 @@ jobs:
           set -eu
           # Stage json-c headers before building QModem packages that include them.
           make package/libs/libjson-c/compile -j"$(nproc)" V=sc
-          make package/libs/libubox/compile -j"$(nproc)" V=sc
-          make package/system/ubus/compile -j"$(nproc)" V=sc
+          make package/libs/libubox/compile \
+            CONFIG_PACKAGE_liblua= \
+            CONFIG_PACKAGE_libubox-lua= \
+            -j"$(nproc)" V=sc
+          make package/system/ubus/compile \
+            CONFIG_PACKAGE_liblua= \
+            CONFIG_PACKAGE_ubus-lua= \
+            -j"$(nproc)" V=sc
 
           for package in \
             tom_modem \
