@@ -99,16 +99,20 @@ jobs:
           CONFIG_PACKAGE_luci-app-qmodem-ttlfw4=m
           CONFIG_PACKAGE_luci-i18n-qmodem-ttlfw4-zh-cn=m
           CONFIG_PACKAGE_qmodem=m
-          CONFIG_PACKAGE_qmodem_INCLUDE_SEAL=n
+          CONFIG_PACKAGE_qmodem_INCLUDE_SEAL=y
+          CONFIG_PACKAGE_qmodem-seal=m
+          CONFIG_PACKAGE_qmodem_monitor=m
+          CONFIG_PACKAGE_luci-app-qmodem-monitor=m
+          CONFIG_PACKAGE_luci-i18n-qmodem-monitor-zh-cn=m
+          CONFIG_PACKAGE_qfirehose=m
           CONFIG_PACKAGE_tom_modem=m
           CONFIG_PACKAGE_tom_modem_EARLY_RETURN=y
           CONFIG_PACKAGE_tom_modem_ENABLE_UBUS_DAEMON=y
           CONFIG_PACKAGE_ubus-at-daemon=m
           CONFIG_PACKAGE_modem_scan=m
           CONFIG_PACKAGE_sms-tool_q=m
-          # Optional SMS forwarding is excluded from the recovery bundle. It
-          # pulls in a separate ucode stack and is not required by QModem.
-          CONFIG_PACKAGE_sms-forwarder-next=n
+          # Required by the modern JS UI; include it explicitly in the bundle.
+          CONFIG_PACKAGE_sms-forwarder-next=m
           CONFIG_PACKAGE_quectel-CM-5G-M=m
 
           CONFIG_PACKAGE_luci-app-qmodem_INCLUDE_ndisc6=y
@@ -120,7 +124,7 @@ jobs:
           CONFIG_PACKAGE_luci-app-qmodem_USING_NORMAL_QUECTEL_CM=n
           CONFIG_PACKAGE_luci-app-qmodem_INCLUDE_ADD_PCI_SUPPORT=n
           CONFIG_PACKAGE_luci-app-qmodem_INCLUDE_ADD_MTK_T7XX_SUPPORT=n
-          CONFIG_PACKAGE_luci-app-qmodem_INCLUDE_ADD_QFIREHOSE_SUPPORT=n
+          CONFIG_PACKAGE_luci-app-qmodem_INCLUDE_ADD_QFIREHOSE_SUPPORT=y
 
           CONFIG_PACKAGE_kmod-qmi_wwan_q=m
           EOF
@@ -157,8 +161,13 @@ jobs:
             sms-tool_q \
             modem_scan \
             quectel_CM_5G_M \
+            sms_forwarder_next \
+            qmodem-seal \
+            qmodem_monitor \
+            qfirehose \
             qmodem \
             luci-app-qmodem-next \
+            luci-app-qmodem-monitor \
             luci-app-qmodem-ttlfw4 \
             quectel_QMI_WWAN
           do
@@ -186,7 +195,7 @@ jobs:
       - name: Assemble the H69K installation bundle
         run: |
           set -eu
-          bundle="${GITHUB_WORKSPACE}/H69K-QModem-v3.2.0-iStoreOS-${OPENWRT_VERSION}"
+          bundle="${GITHUB_WORKSPACE}/H69K-QModem-v3.2.0-Full-iStoreOS-${OPENWRT_VERSION}"
           mkdir -p "${bundle}/packages"
 
           cat > "${bundle}/install.sh" <<'INSTALL_SCRIPT'
@@ -241,6 +250,12 @@ jobs:
           copy_one 'tom_modem_*.ipk'
           copy_one 'ubus-at-daemon_*.ipk'
           copy_one 'sms-tool_q_*.ipk'
+          copy_one 'sms-forwarder-next_*.ipk'
+          copy_one 'qmodem-seal_*.ipk'
+          copy_one 'qmodem_monitor_*.ipk'
+          copy_one 'qfirehose_*.ipk'
+          copy_one 'luci-app-qmodem-monitor_*.ipk'
+          copy_one 'luci-i18n-qmodem-monitor-zh-cn_*.ipk'
           copy_one 'modem_scan_*.ipk'
           copy_one 'quectel-CM-5G-M_*.ipk'
           copy_one 'luci-app-qmodem-next_*.ipk'
@@ -255,6 +270,10 @@ jobs:
             echo "OpenWrt/iStoreOS target: ${OPENWRT_VERSION} ${TARGET}/${SUBTARGET}"
             echo "Required kernel: 6.6.144"
             echo "Required kernel ABI: 77d4782035a23e6f19f9c4751451b4e3"
+            echo "Includes: JS UI, SMS forwarding, network monitor, encrypted feedback, TTL fw4, Quectel QMI and QFirehose"
+            echo "QFirehose is provided only; no modem firmware flashing is performed by install.sh."
+            echo "Excludes: legacy Lua UI/SMS/MWAN, legacy iptables TTL, HC-G80 SIM switch, non-Quectel and PCIe/NSS/MTK drivers"
+            echo "Official runtime dependencies are resolved by opkg; this is not an offline bundle."
           } > "${bundle}/BUILD-INFO.txt"
 
           cd "${bundle}"
@@ -265,7 +284,7 @@ jobs:
       - name: Upload installation bundle
         uses: actions/upload-artifact@v4
         with:
-          name: H69K-QModem-v3.2.0-iStoreOS-${{ env.OPENWRT_VERSION }}
-          path: H69K-QModem-v3.2.0-iStoreOS-${{ env.OPENWRT_VERSION }}.tar.gz
+          name: H69K-QModem-v3.2.0-Full-iStoreOS-${{ env.OPENWRT_VERSION }}
+          path: H69K-QModem-v3.2.0-Full-iStoreOS-${{ env.OPENWRT_VERSION }}.tar.gz
           if-no-files-found: error
           retention-days: 30
