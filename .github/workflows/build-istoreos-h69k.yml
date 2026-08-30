@@ -64,6 +64,12 @@ jobs:
             sdk/package/libs/libubox/Makefile \
             sdk/package/system/ubus/Makefile
 
+          # BUILD_LUA=OFF intentionally does not create lua/ubus.so. Remove the
+          # matching OpenWrt subpackage so the packaging phase does not try to
+          # copy that disabled output.
+          sed -i '/BuildPackage,libubus-lua/d' \
+            sdk/package/system/ubus/Makefile
+
           # H69K uses a Quectel RM520N-GL. Keep only the Quectel vendor QMI
           # driver dependency instead of forcing Fibocom and SIMCom drivers too.
           sed -i \
