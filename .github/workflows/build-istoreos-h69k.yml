@@ -116,6 +116,7 @@ jobs:
           CONFIG_PACKAGE_quectel-CM-5G-M=m
 
           CONFIG_PACKAGE_luci-app-qmodem_INCLUDE_ndisc6=y
+          CONFIG_PACKAGE_ndisc6=m
           CONFIG_PACKAGE_luci-app-qmodem_INCLUDE_vendor-qmi-wwan=y
           CONFIG_PACKAGE_luci-app-qmodem_INCLUDE_generic-qmi-wwan=n
           CONFIG_PACKAGE_luci-app-qmodem_INCLUDE_nss-qmi-wwan=n
@@ -156,6 +157,7 @@ jobs:
           mkdir -p build-logs
 
           for package in \
+            ndisc6 \
             tom_modem \
             ubus_at_daemon \
             sms-tool_q \
@@ -247,6 +249,7 @@ jobs:
           }
 
           copy_one 'qmodem_*.ipk'
+          copy_one 'ndisc6_*.ipk'
           copy_one 'tom_modem_*.ipk'
           copy_one 'ubus-at-daemon_*.ipk'
           copy_one 'sms-tool_q_*.ipk'
@@ -263,6 +266,24 @@ jobs:
           copy_one 'luci-app-qmodem-ttlfw4_*.ipk'
           copy_one 'luci-i18n-qmodem-ttlfw4-zh-cn_*.ipk'
           copy_one 'kmod-qmi_wwan_q_*.ipk'
+
+          # Audit selected outputs from the private feed, including dependencies
+          # absent from official feeds. Do not ship unselected sibling packages.
+          private_outputs="$(find sdk/bin/packages -type f -path '*/qmodem/*.ipk')"
+          test -n "${private_outputs}"
+          for file in ${private_outputs}; do
+            filename="$(basename "${file}")"
+            package="${filename%%_*}"
+            # Package names may contain underscores: remove version and arch.
+            package="${filename%_*}"
+            package="${package%_*}"
+            if grep -Eq "^CONFIG_PACKAGE_${package}=(m|y)$" sdk/.config; then
+              test -f "${bundle}/packages/${filename}" || {
+                echo "Selected private dependency missing from bundle: ${filename}" >&2
+                exit 1
+              }
+            fi
+          done
 
           {
             echo "QModem source: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}@${GITHUB_SHA}"
