@@ -45,8 +45,7 @@ jobs:
           test "$(git -C qmodem rev-parse HEAD)" = "$QMODEM_COMMIT"
           mkdir -p reports
           wget -q "$SDK_URL/$SDK_FILE"
-          printf '%s  %s
-' "$SDK_SHA256" "$SDK_FILE" | sha256sum -c -
+          printf '%s  %s\n' "$SDK_SHA256" "$SDK_FILE" | sha256sum -c -
           mkdir sdk
           tar --zstd -xf "$SDK_FILE" -C sdk --strip-components=1
           wget -q "$SDK_URL/kmods/6.12.112-1-$KERNEL_ABI/" -O reports/kernel-repository.html
@@ -61,8 +60,7 @@ jobs:
           # Pin base to the release tag and all supplementary feeds to release hashes.
           echo 'src-git-full base https://github.com/openwrt/openwrt.git;v25.12.6' > sdk/feeds.conf
           cat reports/feeds.buildinfo >> sdk/feeds.conf
-          printf 'src-link qmodem %s/qmodem
-' "$GITHUB_WORKSPACE" >> sdk/feeds.conf
+          printf 'src-link qmodem %s/qmodem\n' "$GITHUB_WORKSPACE" >> sdk/feeds.conf
           # The modern UI does not expose the legacy UI's optional choices.
           # Declare the chosen USB QMI runtime dependencies explicitly.
           python3 - <<'PY'
@@ -85,8 +83,7 @@ jobs:
           [[ "$(git -C feeds/base rev-parse HEAD)" == 981c978eff* ]]
           cp feeds.conf ../reports/feeds.conf
           for feed in base packages luci routing telephony video; do
-            printf '%s %s
-' "$feed" "$(git -C "feeds/$feed" rev-parse HEAD)"
+            printf '%s %s\n' "$feed" "$(git -C "feeds/$feed" rev-parse HEAD)"
           done > ../reports/feed-commits.txt
 
       - name: Select modern UI and required backend packages
