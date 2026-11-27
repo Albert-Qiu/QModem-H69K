@@ -48,12 +48,6 @@ jobs:
           printf '%s  %s\n' "$SDK_SHA256" "$SDK_FILE" | sha256sum -c -
           mkdir sdk
           tar --zstd -xf "$SDK_FILE" -C sdk --strip-components=1
-          # Fail closed unless the SDK's libubox/ubus ABI and source revisions
-          # exactly match the versions installed on the H69K.
-          grep -Fq 'PKG_SOURCE_VERSION:=7dd127841e82eb1cfb61185da37dde7b9bd9ba6d' sdk/package/libs/libubox/Makefile
-          grep -Fq 'PKG_ABI_VERSION:=20260213' sdk/package/libs/libubox/Makefile
-          grep -Fq 'PKG_SOURCE_VERSION:=24864e7840b3a02a9ef76284a373f6b2f00b8a9b' sdk/package/system/ubus/Makefile
-          grep -Fq 'PKG_ABI_VERSION:=20251202' sdk/package/system/ubus/Makefile
           wget -q "$SDK_URL/kmods/6.12.112-1-$KERNEL_ABI/" -O reports/kernel-repository.html
           grep -Fq "kernel-6.12.112~$KERNEL_ABI-r1.apk" reports/kernel-repository.html
           wget -q "$SDK_URL/feeds.buildinfo" -O reports/feeds.buildinfo
@@ -89,6 +83,12 @@ jobs:
           cd sdk
           ./scripts/feeds update -a
           ./scripts/feeds install -a
+          # SDK archives do not contain the full base-feed source tree.
+          # Verify core package ABI only after the pinned base feed is checked out.
+          grep -Fq 'PKG_SOURCE_VERSION:=7dd127841e82eb1cfb61185da37dde7b9bd9ba6d' feeds/base/package/libs/libubox/Makefile
+          grep -Fq 'PKG_ABI_VERSION:=20260213' feeds/base/package/libs/libubox/Makefile
+          grep -Fq 'PKG_SOURCE_VERSION:=24864e7840b3a02a9ef76284a373f6b2f00b8a9b' feeds/base/package/system/ubus/Makefile
+          grep -Fq 'PKG_ABI_VERSION:=20251202' feeds/base/package/system/ubus/Makefile
           ./scripts/feeds install -f -a -p qmodem
           [[ "$(git -C feeds/base rev-parse HEAD)" == 981c978eff* ]]
           cp feeds.conf ../reports/feeds.conf
