@@ -57,12 +57,9 @@ jobs:
       - name: Configure release feeds and USB QMI dependencies
         run: |
           set -euo pipefail
-          # Pin base to the release tag and all supplementary feeds to release hashes.
           echo 'src-git-full base https://github.com/openwrt/openwrt.git;v25.12.6' > sdk/feeds.conf
           cat reports/feeds.buildinfo >> sdk/feeds.conf
           printf 'src-link qmodem %s/qmodem\n' "$GITHUB_WORKSPACE" >> sdk/feeds.conf
-          # The modern UI does not expose the legacy UI's optional choices.
-          # Declare the chosen USB QMI runtime dependencies explicitly.
           python3 - <<'PY'
           from pathlib import Path
           p = Path('qmodem/application/qmodem/Makefile')
@@ -135,8 +132,13 @@ jobs:
         working-directory: sdk
         run: |
           set -euo pipefail
+          # Feed packages are built through package/feeds/<feed>/<package>,
+          # not package/<package>. Keep each top-level package serialized so
+          # the first actual compiler or dependency failure remains visible.
           for package in ndisc6 tom_modem ubus_at_daemon sms-tool_q modem_scan quectel_CM_5G_M sms_forwarder_next qmodem-seal qmodem luci-app-qmodem-next; do
-            make "package/$package/compile" -j2 V=s 2>&1 | tee "../reports/build-$package.log"
+            target="package/feeds/qmodem/$package/compile"
+            test -d "package/feeds/qmodem/$package"
+            make "$target" -j1 V=s 2>&1 | tee "../reports/build-$package.log"
           done
 
       - name: Collect APKs and audit package metadata
@@ -145,8 +147,6 @@ jobs:
           mkdir -p artifact/packages artifact/metadata
           apktool="$GITHUB_WORKSPACE/sdk/staging_dir/host/bin/apk"
           test -x "$apktool"
-          # Only QModem feed outputs are distributed. Official libraries and
-          # stock kernel drivers must be resolved from the matching firmware feeds.
           for package in qmodem luci-app-qmodem-next tom_modem ubus-at-daemon sms-tool_q modem_scan quectel-CM-5G-M sms-forwarder-next qmodem-seal ndisc6; do
             mapfile -t files < <(find sdk/bin/packages/aarch64_generic/qmodem -type f -name "$package-[0-9]*.apk")
             test "${#files[@]}" -eq 1
