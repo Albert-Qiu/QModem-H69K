@@ -1,0 +1,195 @@
+name: H69K QModem stable - OpenWrt 25.12.6
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: h69k-25-12-6
+  cancel-in-progress: false
+
+env:
+  QMODEM_COMMIT: f9dd0af1d1f5a0353c2e44811b82162c7dcf6746
+  SDK_FILE: openwrt-sdk-25.12.6-rockchip-armv8_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+  SDK_SHA256: 2a45cbfa7e6cce588d006039205afba03bd242e90d2df4dc442920716a642ce0
+  SDK_URL: https://downloads.openwrt.org/releases/25.12.6/targets/rockchip/armv8
+  KERNEL_ABI: 5eacf764ba9415e5d7ff4aecb2e45c4d
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout pinned upstream stable source
+        uses: actions/checkout@v4
+        with:
+          repository: FUjr/QModem
+          ref: f9dd0af1d1f5a0353c2e44811b82162c7dcf6746
+          path: qmodem
+          persist-credentials: false
+
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang flex bison g++ gawk gcc-multilib g++-multilib gettext git libncurses-dev libssl-dev python3 python3-dev python3-setuptools python3-pyelftools python3-venv rsync unzip file wget zstd swig libelf-dev
+          echo /usr/bin >> "$GITHUB_PATH"
+
+      - name: Verify source and release SDK
+        run: |
+          set -euo pipefail
+          test "$(git -C qmodem rev-parse HEAD)" = "$QMODEM_COMMIT"
+          mkdir -p reports
+          wget -q "$SDK_URL/$SDK_FILE"
+          printf '%s  %s
+' "$SDK_SHA256" "$SDK_FILE" | sha256sum -c -
+          mkdir sdk
+          tar --zstd -xf "$SDK_FILE" -C sdk --strip-components=1
+          wget -q "$SDK_URL/kmods/6.12.112-1-$KERNEL_ABI/" -O reports/kernel-repository.html
+          wget -q "$SDK_URL/feeds.buildinfo" -O reports/feeds.buildinfo
+          echo '037f68494e8cf059f7cb49dbce7e0f73a3da4db1e73b2b8b7477ff2d2676f40b  reports/feeds.buildinfo' | sha256sum -c -
+          wget -q "$SDK_URL/version.buildinfo" -O reports/version.buildinfo
+          grep -qx 'r33311-981c978eff' reports/version.buildinfo
+
+      - name: Configure release feeds and USB QMI dependencies
+        run: |
+          set -euo pipefail
+          # Pin base to the release tag and all supplementary feeds to release hashes.
+          echo 'src-git-full base https://github.com/openwrt/openwrt.git;v25.12.6' > sdk/feeds.conf
+          cat reports/feeds.buildinfo >> sdk/feeds.conf
+          printf 'src-link qmodem %s/qmodem
+' "$GITHUB_WORKSPACE" >> sdk/feeds.conf
+          # The modern UI does not expose the legacy UI's optional choices.
+          # Declare the chosen USB QMI runtime dependencies explicitly.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('qmodem/application/qmodem/Makefile')
+          s = p.read_text()
+          assert s.count('  DEPENDS:=') == 1
+          p.write_text(s.replace('  DEPENDS:=', '  DEPENDS:=+kmod-usb-net-qmi-wwan +quectel-CM-5G-M +ndisc6 '))
+          for name in ('tom_modem', 'quectel_CM_5G_M'):
+              p = Path('qmodem/application') / name / 'Makefile'
+              s = p.read_text()
+              assert 'CFLAGS="$(TARGET_CFLAGS)' in s
+              p.write_text(s.replace('CFLAGS="$(TARGET_CFLAGS)', 'CFLAGS="$(TARGET_CFLAGS) $(TARGET_CPPFLAGS)'))
+          PY
+          git -C qmodem diff > reports/h69k-source.patch
+          cd sdk
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          ./scripts/feeds install -f -a -p qmodem
+          [[ "$(git -C feeds/base rev-parse HEAD)" == 981c978eff* ]]
+          cp feeds.conf ../reports/feeds.conf
+          for feed in base packages luci routing telephony video; do
+            printf '%s %s
+' "$feed" "$(git -C "feeds/$feed" rev-parse HEAD)"
+          done > ../reports/feed-commits.txt
+
+      - name: Select modern UI and required backend packages
+        run: |
+          set -euo pipefail
+          cat > sdk/.config <<'EOF'
+          CONFIG_TARGET_rockchip=y
+          CONFIG_TARGET_rockchip_armv8=y
+          CONFIG_ALL_NONSHARED=n
+          CONFIG_ALL_KMODS=n
+          CONFIG_ALL=n
+          CONFIG_AUTOREMOVE=n
+          CONFIG_LUCI_LANG_zh_Hans=y
+          CONFIG_PACKAGE_luci-app-qmodem=n
+          CONFIG_PACKAGE_luci-app-qmodem-next=m
+          CONFIG_PACKAGE_luci-i18n-qmodem-next-zh-cn=m
+          CONFIG_PACKAGE_qmodem=m
+          CONFIG_PACKAGE_qmodem_INCLUDE_SEAL=y
+          CONFIG_PACKAGE_qmodem-seal=m
+          CONFIG_PACKAGE_tom_modem=m
+          CONFIG_PACKAGE_tom_modem_EARLY_RETURN=y
+          CONFIG_PACKAGE_tom_modem_ENABLE_UBUS_DAEMON=y
+          CONFIG_PACKAGE_ubus-at-daemon=m
+          CONFIG_PACKAGE_modem_scan=m
+          CONFIG_PACKAGE_sms-tool_q=m
+          CONFIG_PACKAGE_sms-forwarder-next=m
+          CONFIG_PACKAGE_quectel-CM-5G-M=m
+          CONFIG_PACKAGE_ndisc6=m
+          CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=m
+          EOF
+          cd sdk
+          make defconfig
+          grep -qx 'CONFIG_TARGET_ARCH_PACKAGES="aarch64_generic"' .config
+          for package in qmodem luci-app-qmodem-next quectel-CM-5G-M ndisc6; do
+            grep -qx "CONFIG_PACKAGE_$package=m" .config
+          done
+          if grep -Eq '^CONFIG_PACKAGE_(luci-app-qmodem|kmod-qmi_wwan_[qfs]|kmod-pcie_mhi)=(m|y)$' .config; then
+            echo 'Unexpected legacy UI or vendor driver selection' >&2
+            exit 1
+          fi
+          cp .config ../reports/sdk.config
+          make prereq -j1 V=s 2>&1 | tee ../reports/prerequisites.log
+
+      - name: Download sources
+        working-directory: sdk
+        run: make download -j4
+
+      - name: Compile required packages without ignoring errors
+        working-directory: sdk
+        run: |
+          set -euo pipefail
+          for package in ndisc6 tom_modem ubus_at_daemon sms-tool_q modem_scan quectel_CM_5G_M sms_forwarder_next qmodem-seal qmodem luci-app-qmodem-next; do
+            make "package/$package/compile" -j2 V=s 2>&1 | tee "../reports/build-$package.log"
+          done
+
+      - name: Collect APKs and audit package metadata
+        run: |
+          set -euo pipefail
+          mkdir -p artifact/packages artifact/metadata
+          apktool="$GITHUB_WORKSPACE/sdk/staging_dir/host/bin/apk"
+          test -x "$apktool"
+          # Only QModem feed outputs are distributed. Official libraries and
+          # stock kernel drivers must be resolved from the matching firmware feeds.
+          for package in qmodem luci-app-qmodem-next tom_modem ubus-at-daemon sms-tool_q modem_scan quectel-CM-5G-M sms-forwarder-next qmodem-seal ndisc6; do
+            mapfile -t files < <(find sdk/bin/packages/aarch64_generic/qmodem -type f -name "$package-[0-9]*.apk")
+            test "${#files[@]}" -eq 1
+            cp "${files[0]}" artifact/packages/
+          done
+          find sdk/bin/packages/aarch64_generic/qmodem -type f -name 'luci-i18n-qmodem-next-zh-cn-*.apk' -exec cp -t artifact/packages/ {} +
+          for file in artifact/packages/*.apk; do
+            "$apktool" adbdump "$file" > "artifact/metadata/$(basename "$file").txt"
+          done
+          if grep -RE 'aarch64_cortex|kmod-qmi_wwan_[qfs]|kmod-pcie_mhi' artifact/metadata; then
+            echo 'Unexpected architecture or vendor driver dependency' >&2
+            exit 1
+          fi
+          {
+            echo "Source: FUjr/QModem@$QMODEM_COMMIT"
+            echo "SDK: $SDK_FILE"
+            echo "SDK SHA256: $SDK_SHA256"
+            echo 'Target: rockchip/armv8; APK architecture: aarch64_generic'
+            echo "Required firmware kernel: 6.12.112; ABI: $KERNEL_ABI"
+            echo 'Drivers: stock USB QMI; no vendor/PCIe kernel modules included.'
+            echo 'Official runtime dependencies must come from matching 25.12.6 feeds.'
+            echo 'Build artifacts only. Package metadata requires review before installation.'
+            echo 'No router access, install script, backup, subscription or certificate is included.'
+          } > artifact/BUILD-INFO.txt
+          cp reports/h69k-source.patch reports/feed-commits.txt reports/sdk.config artifact/
+          (cd artifact && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
+
+      - name: Upload verified build outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: H69K-QModem-stable-25.12.6-aarch64_generic
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: H69K-25.12.6-build-diagnostics
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 14
