@@ -68,7 +68,7 @@ jobs:
       - name: Configure release feeds and USB QMI dependencies
         run: |
           set -euo pipefail
-          echo 'src-git-full base https://github.com/openwrt/openwrt.git;v25.12.6' > sdk/feeds.conf
+          echo 'src-git-full base https://github.com/openwrt/openwrt.git^981c978eff636fc7d81f0ed17b00e2a6317c949a' > sdk/feeds.conf
           cat reports/feeds.buildinfo >> sdk/feeds.conf
           printf 'src-link qmodem %s/qmodem\n' "$GITHUB_WORKSPACE" >> sdk/feeds.conf
           python3 - <<'PY'
@@ -93,8 +93,14 @@ jobs:
           grep -Fq 'PKG_ABI_VERSION:=20260213' feeds/base/package/libs/libubox/Makefile
           grep -Fq 'PKG_SOURCE_VERSION:=24864e7840b3a02a9ef76284a373f6b2f00b8a9b' feeds/base/package/system/ubus/Makefile
           grep -Fq 'PKG_ABI_VERSION:=20251202' feeds/base/package/system/ubus/Makefile
-          ./scripts/feeds install -f -a -p qmodem
-          [[ "$(git -C feeds/base rev-parse HEAD)" == 981c978eff* ]]
+          # Install only the required QModem package set. Installing the
+          # entire feed pulls unrelated optional packages with unavailable
+          # dependencies (for example vendor-specific modem drivers).
+          ./scripts/feeds install -p qmodem \
+            qmodem luci-app-qmodem-next tom_modem ubus-at-daemon \
+            sms-tool_q modem_scan quectel-CM-5G-M sms-forwarder-next \
+            qmodem-seal ndisc6
+          [[ "$(git -C feeds/base rev-parse HEAD)" == "981c978eff636fc7d81f0ed17b00e2a6317c949a" ]]
           cp feeds.conf ../reports/feeds.conf
           for feed in base packages luci routing telephony video; do
             printf '%s %s\n' "$feed" "$(git -C "feeds/$feed" rev-parse HEAD)"
