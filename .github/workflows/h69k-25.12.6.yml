@@ -140,7 +140,84 @@ jobs:
           for package in qmodem luci-app-qmodem-next quectel-CM-5G-M ndisc6; do
             grep -qx "CONFIG_PACKAGE_$package=m" .config
           done
-          if grep -Eq '^CONFIG_PACKAGE_(luci-app-qmodem|kmod-qmi_wwan_[qfs]|kmod-pcie_mhi)=(m|y)$' .config; then
+          if grep -Eq '^CONFIG_PACKAGE_(luci-app-qmodem|kmod-qmi_wwan_[qfs]|kmod-pcie_mhi)=(m|y)
+            echo 'Unexpected legacy UI or vendor driver selection' >&2
+            exit 1
+          fi
+          cp .config ../reports/sdk.config
+          make prereq -j1 V=s 2>&1 | tee ../reports/prerequisites.log
+
+      - name: Download sources
+        working-directory: sdk
+        run: make download -j4
+
+      - name: Compile required packages without ignoring errors
+        working-directory: sdk
+        run: |
+          set -euo pipefail
+          # Feed packages are built through package/feeds/<feed>/<package>,
+          # not package/<package>. Keep each top-level package serialized so
+          # the first actual compiler or dependency failure remains visible.
+          for package in ndisc6 tom_modem ubus_at_daemon sms-tool_q modem_scan quectel_CM_5G_M sms_forwarder_next qmodem-seal qmodem luci-app-qmodem-next; do
+            target="package/feeds/qmodem/$package/compile"
+            test -d "package/feeds/qmodem/$package"
+            make "$target" -j1 V=s 2>&1 | tee "../reports/build-$package.log"
+          done
+
+      - name: Collect APKs and audit package metadata
+        run: |
+          set -euo pipefail
+          mkdir -p artifact/packages artifact/metadata
+          apktool="$GITHUB_WORKSPACE/sdk/staging_dir/host/bin/apk"
+          test -x "$apktool"
+          for package in qmodem luci-app-qmodem-next tom_modem ubus-at-daemon sms-tool_q modem_scan quectel-CM-5G-M sms-forwarder-next qmodem-seal ndisc6; do
+            mapfile -t files < <(find sdk/bin/packages/aarch64_generic/qmodem -type f -name "$package-[0-9]*.apk")
+            test "${#files[@]}" -eq 1
+            cp "${files[0]}" artifact/packages/
+          done
+          find sdk/bin/packages/aarch64_generic/qmodem -type f -name 'luci-i18n-qmodem-next-zh-cn-*.apk' -exec cp -t artifact/packages/ {} +
+          for file in artifact/packages/*.apk; do
+            "$apktool" adbdump "$file" > "artifact/metadata/$(basename "$file").txt"
+          done
+          if grep -RE 'aarch64_cortex|kmod-qmi_wwan_[qfs]|kmod-pcie_mhi' artifact/metadata; then
+            echo 'Unexpected architecture or vendor driver dependency' >&2
+            exit 1
+          fi
+          {
+            echo "Source: FUjr/QModem@$QMODEM_COMMIT"
+            echo "SDK: $SDK_FILE"
+            echo "SDK SHA256: $SDK_SHA256"
+            echo 'Target: rockchip/armv8; APK architecture: aarch64_generic'
+            echo "Required firmware kernel: 6.12.112; ABI: $KERNEL_ABI"
+            echo 'Drivers: use the firmware-provided stock USB QMI driver; no QModem vendor/PCIe kernel module is bundled.'
+            echo 'Runtime core libraries are not bundled or upgraded by this artifact.'
+            echo 'Expected ABI package names: libblobmsg-json20260213, libubox20260213, libubus20251202, libc, libgcc1.'
+            echo 'The SDK release package revisions may differ; APK metadata is audited and H69K simulation remains mandatory.'
+            echo 'Build artifacts only. Package metadata requires review before installation.'
+            echo 'No router access, install script, backup, subscription or certificate is included.'
+          } > artifact/BUILD-INFO.txt
+          cp reports/h69k-source.patch reports/feed-commits.txt reports/sdk.config reports/core-abi-check.txt artifact/
+          (cd artifact && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
+
+      - name: Upload verified build outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: H69K-QModem-stable-25.12.6-aarch64_generic
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: H69K-25.12.6-build-diagnostics
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 14
+ .config; then
+            echo 'Unexpected package selections:' >&2
+            grep -E '^CONFIG_PACKAGE_(luci-app-qmodem|kmod-qmi_wwan_[qfs]|kmod-pcie_mhi)=' .config >&2 || true
             echo 'Unexpected legacy UI or vendor driver selection' >&2
             exit 1
           fi
