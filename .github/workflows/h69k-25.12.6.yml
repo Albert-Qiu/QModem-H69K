@@ -152,8 +152,9 @@ jobs:
           for package in qmodem luci-app-qmodem-next quectel-CM-5G-M ndisc6; do
             grep -qx "CONFIG_PACKAGE_$package=m" .config
           done
-          if grep -Eq '^CONFIG_PACKAGE_(luci-app-qmodem|kmod-qmi_wwan_[qfs]|kmod-pcie_mhi)=(m|y)
-            echo 'Unexpected legacy UI or vendor driver selection' >&2
+          if grep -Eq '^CONFIG_PACKAGE_(luci-app-qmodem|kmod-qmi_wwan_[qfs]|kmod-pcie_mhi)=(m|y)$' .config; then
+            echo 'Unexpected legacy UI or vendor driver selection:' >&2
+            grep -E '^CONFIG_PACKAGE_(luci-app-qmodem|kmod-qmi_wwan_[qfs]|kmod-pcie_mhi)=' .config >&2 || true
             exit 1
           fi
           cp .config ../reports/sdk.config
