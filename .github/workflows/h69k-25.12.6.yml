@@ -48,12 +48,24 @@ jobs:
           printf '%s  %s\n' "$SDK_SHA256" "$SDK_FILE" | sha256sum -c -
           mkdir sdk
           tar --zstd -xf "$SDK_FILE" -C sdk --strip-components=1
+          # Fail closed unless the SDK's libubox/ubus ABI and source revisions
+          # exactly match the versions installed on the H69K.
+          grep -Fq 'PKG_SOURCE_VERSION:=7dd127841e82eb1cfb61185da37dde7b9bd9ba6d' sdk/package/libs/libubox/Makefile
+          grep -Fq 'PKG_ABI_VERSION:=20260213' sdk/package/libs/libubox/Makefile
+          grep -Fq 'PKG_SOURCE_VERSION:=24864e7840b3a02a9ef76284a373f6b2f00b8a9b' sdk/package/system/ubus/Makefile
+          grep -Fq 'PKG_ABI_VERSION:=20251202' sdk/package/system/ubus/Makefile
           wget -q "$SDK_URL/kmods/6.12.112-1-$KERNEL_ABI/" -O reports/kernel-repository.html
           grep -Fq "kernel-6.12.112~$KERNEL_ABI-r1.apk" reports/kernel-repository.html
           wget -q "$SDK_URL/feeds.buildinfo" -O reports/feeds.buildinfo
           echo '037f68494e8cf059f7cb49dbce7e0f73a3da4db1e73b2b8b7477ff2d2676f40b  reports/feeds.buildinfo' | sha256sum -c -
           wget -q "$SDK_URL/version.buildinfo" -O reports/version.buildinfo
           grep -qx 'r33311-981c978eff' reports/version.buildinfo
+          {
+            echo 'H69K libubox source: 7dd127841e82eb1cfb61185da37dde7b9bd9ba6d (ABI 20260213)'
+            echo 'H69K libubus source: 24864e7840b3a02a9ef76284a373f6b2f00b8a9b (ABI 20251202)'
+            echo 'H69K libc: musl 1.2.5-r5; libgcc1: 14.3.0-r5'
+            echo 'SDK GCC: 14.3.0; SDK musl: 1.2.5'
+          } > reports/core-abi-check.txt
 
       - name: Configure release feeds and USB QMI dependencies
         run: |
@@ -174,7 +186,7 @@ jobs:
             echo 'Build artifacts only. Package metadata requires review before installation.'
             echo 'No router access, install script, backup, subscription or certificate is included.'
           } > artifact/BUILD-INFO.txt
-          cp reports/h69k-source.patch reports/feed-commits.txt reports/sdk.config artifact/
+          cp reports/h69k-source.patch reports/feed-commits.txt reports/sdk.config reports/core-abi-check.txt artifact/
           (cd artifact && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
 
       - name: Upload verified build outputs
