@@ -48,8 +48,11 @@ jobs:
           printf '%s  %s\n' "$SDK_SHA256" "$SDK_FILE" | sha256sum -c -
           mkdir sdk
           tar --zstd -xf "$SDK_FILE" -C sdk --strip-components=1
-          wget -q "$SDK_URL/kmods/6.12.112-1-$KERNEL_ABI/" -O reports/kernel-repository.html
-          grep -Fq "kernel-6.12.112~$KERNEL_ABI-r1.apk" reports/kernel-repository.html
+          # The kernel metadata APK is in the target packages repository;
+          # the kmods repository contains loadable kernel module APKs.
+          wget -q "$SDK_URL/packages/" -O reports/kernel-package-repository.html
+          grep -Fq "kernel-6.12.112~$KERNEL_ABI-r1.apk" reports/kernel-package-repository.html
+          wget -q "$SDK_URL/kmods/6.12.112-1-$KERNEL_ABI/" -O reports/kernel-module-repository.html
           wget -q "$SDK_URL/feeds.buildinfo" -O reports/feeds.buildinfo
           echo '037f68494e8cf059f7cb49dbce7e0f73a3da4db1e73b2b8b7477ff2d2676f40b  reports/feeds.buildinfo' | sha256sum -c -
           wget -q "$SDK_URL/version.buildinfo" -O reports/version.buildinfo
