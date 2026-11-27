@@ -49,6 +49,7 @@ jobs:
           mkdir sdk
           tar --zstd -xf "$SDK_FILE" -C sdk --strip-components=1
           wget -q "$SDK_URL/kmods/6.12.112-1-$KERNEL_ABI/" -O reports/kernel-repository.html
+          grep -Fq "kernel-6.12.112~$KERNEL_ABI-r1.apk" reports/kernel-repository.html
           wget -q "$SDK_URL/feeds.buildinfo" -O reports/feeds.buildinfo
           echo '037f68494e8cf059f7cb49dbce7e0f73a3da4db1e73b2b8b7477ff2d2676f40b  reports/feeds.buildinfo' | sha256sum -c -
           wget -q "$SDK_URL/version.buildinfo" -O reports/version.buildinfo
@@ -166,8 +167,10 @@ jobs:
             echo "SDK SHA256: $SDK_SHA256"
             echo 'Target: rockchip/armv8; APK architecture: aarch64_generic'
             echo "Required firmware kernel: 6.12.112; ABI: $KERNEL_ABI"
-            echo 'Drivers: stock USB QMI; no vendor/PCIe kernel modules included.'
-            echo 'Official runtime dependencies must come from matching 25.12.6 feeds.'
+            echo 'Drivers: use the firmware-provided stock USB QMI driver; no QModem vendor/PCIe kernel module is bundled.'
+            echo 'Runtime core libraries are not bundled or upgraded by this artifact.'
+            echo 'Expected ABI package names: libblobmsg-json20260213, libubox20260213, libubus20251202, libc, libgcc1.'
+            echo 'The SDK release package revisions may differ; APK metadata is audited and H69K simulation remains mandatory.'
             echo 'Build artifacts only. Package metadata requires review before installation.'
             echo 'No router access, install script, backup, subscription or certificate is included.'
           } > artifact/BUILD-INFO.txt
